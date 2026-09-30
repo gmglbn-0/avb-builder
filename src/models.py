@@ -34,9 +34,10 @@ class DeviceConfig:
     name: str
     upstream_url: str
     branch: str = "main"
-    patch_mode: str = "rootless"
+    patch_mode: str = "rootless"  # "rootless", "ksu-next", "prepatched", "magisk"
     prepatched_boot: Optional[str] = None
     magisk_apk: Optional[str] = None
+    kmi: Optional[str] = None  # e.g. "android13-5.10" or None for auto-detect
     keep_builds: int = 2
     enabled: bool = True
 

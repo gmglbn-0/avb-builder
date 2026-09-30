@@ -30,6 +30,76 @@ def compute_hashes_and_size(file_path: Path) -> Dict[str, Any]:
         "size": size,
     }
 
+def extract_and_patch_boot_with_ksu(
+    config: Config,
+    device: DeviceConfig,
+    raw_ota_path: Path,
+    work_dir: Path,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Path:
+    """Extract boot.img from raw OTA and patch it with KernelSU-Next using ksud and magiskboot."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    msg = f"Extracting boot.img from {raw_ota_path.name}..."
+    logger.info(msg)
+    if log_callback:
+        log_callback(msg)
+
+    extract_cmd = [
+        str(config.avbroot_path),
+        "ota",
+        "extract",
+        "--input", str(raw_ota_path),
+        "--partition", "boot",
+        "-d", str(work_dir),
+    ]
+    res = subprocess.run(extract_cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise PatchError(f"Failed to extract boot.img from OTA: {res.stderr}")
+
+    extracted_boot = work_dir / "boot.img"
+    if not extracted_boot.exists():
+        raise PatchError(f"Extracted boot.img not found at {extracted_boot}")
+
+    msg = f"Patching boot.img with KernelSU-Next (ksud)..."
+    logger.info(msg)
+    if log_callback:
+        log_callback(msg)
+
+    env = os.environ.copy()
+    bin_dir = str(config.magiskboot_path.parent)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    patched_boot_name = "boot_ksu.img"
+    ksu_cmd = [
+        str(config.ksud_path),
+        "boot-patch",
+        "-b", str(extracted_boot),
+        "-o", str(work_dir),
+        "--out-name", patched_boot_name,
+    ]
+    if device.kmi:
+        ksu_cmd.extend(["--kmi", device.kmi])
+
+    ksu_res = subprocess.run(ksu_cmd, capture_output=True, text=True, env=env)
+    if ksu_res.returncode != 0:
+        raise PatchError(f"ksud boot-patch failed: {ksu_res.stderr or ksu_res.stdout}")
+
+    patched_boot = work_dir / patched_boot_name
+    if not patched_boot.exists():
+        candidates = list(work_dir.glob("kernelsu_boot*.img"))
+        if candidates:
+            patched_boot = candidates[0]
+        else:
+            raise PatchError(f"Patched KernelSU boot image not found in {work_dir}")
+
+    msg = f"Successfully injected KernelSU-Next into {patched_boot.name}"
+    logger.info(msg)
+    if log_callback:
+        log_callback(msg)
+
+    return patched_boot
+
 def patch_ota_with_avbroot(
     config: Config,
     device: DeviceConfig,
@@ -68,49 +138,62 @@ def patch_ota_with_avbroot(
     if os.environ.get(config.ota_passphrase_env):
         cmd.extend(["--pass-ota-env-var", config.ota_passphrase_env])
 
-    # Root / Patch mode
-    if device.patch_mode == "rootless":
-        cmd.append("--rootless")
-    elif device.patch_mode == "prepatched" and device.prepatched_boot:
-        cmd.extend(["--prepatched", str(device.prepatched_boot)])
-    elif device.patch_mode == "magisk" and device.magisk_apk:
-        cmd.extend(["--magisk", str(device.magisk_apk)])
-    else:
-        # Default to rootless if unspecified
-        cmd.append("--rootless")
+    ksu_work_dir = None
+    try:
+        # Root / Patch mode
+        if device.patch_mode == "ksu-next":
+            ksu_work_dir = config.temp_dir / f"ksu_{device.codename}_{int(time.time())}"
+            patched_boot = extract_and_patch_boot_with_ksu(
+                config=config,
+                device=device,
+                raw_ota_path=raw_ota_path,
+                work_dir=ksu_work_dir,
+                log_callback=log_callback,
+            )
+            cmd.extend(["--prepatched", str(patched_boot)])
+        elif device.patch_mode == "prepatched" and device.prepatched_boot:
+            cmd.extend(["--prepatched", str(device.prepatched_boot)])
+        elif device.patch_mode == "magisk" and device.magisk_apk:
+            cmd.extend(["--magisk", str(device.magisk_apk)])
+        else:
+            # Default to rootless if unspecified or if ROM already has KSU
+            cmd.append("--rootless")
 
-    msg = f"Executing avbroot: {' '.join(cmd)}"
-    logger.info(msg)
-    if log_callback:
-        log_callback(msg)
+        msg = f"Executing avbroot: {' '.join(cmd)}"
+        logger.info(msg)
+        if log_callback:
+            log_callback(msg)
 
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        env=env,
-    )
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
 
-    if process.stdout:
-        for line in process.stdout:
-            clean_line = line.rstrip()
-            logger.info(f"[avbroot] {clean_line}")
-            if log_callback:
-                log_callback(f"[avbroot] {clean_line}")
+        if process.stdout:
+            for line in process.stdout:
+                clean_line = line.rstrip()
+                logger.info(f"[avbroot] {clean_line}")
+                if log_callback:
+                    log_callback(f"[avbroot] {clean_line}")
 
-    process.wait()
-    if process.returncode != 0:
+        process.wait()
+        if process.returncode != 0:
+            if temp_output.exists():
+                temp_output.unlink()
+            raise PatchError(f"avbroot failed with exit code {process.returncode}")
+
         if temp_output.exists():
-            temp_output.unlink()
-        raise PatchError(f"avbroot failed with exit code {process.returncode}")
+            temp_output.rename(output_ota_path)
 
-    if temp_output.exists():
-        temp_output.rename(output_ota_path)
-
-    logger.info(f"Successfully generated signed OTA: {output_ota_path}")
-    return output_ota_path
+        logger.info(f"Successfully generated signed OTA: {output_ota_path}")
+        return output_ota_path
+    finally:
+        if ksu_work_dir and ksu_work_dir.exists():
+            shutil.rmtree(ksu_work_dir, ignore_errors=True)
 
 def generate_custota_csig(
     config: Config,

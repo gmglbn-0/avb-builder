@@ -31,6 +31,7 @@ devices:
     codename: "bluejay"
     upstream_url: "https://raw.githubusercontent.com/Evolution-X/OTA/vic/builds/bluejay.json"
     branch: "vic"
-    patch_mode: "rootless"
+    patch_mode: "ksu-next"  # Automatically extracts boot.img, patches with KernelSU-Next (ksud), and injects into OTA!
+    kmi: null               # Auto-detects KMI (e.g. android13-5.10 or android12-5.10), or specify explicitly
     keep_builds: 2
     enabled: true

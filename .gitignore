@@ -5,22 +5,19 @@ __pycache__/
 .venv/
 venv/
 
-# Secrets & Keys (NEVER COMMIT)
-data/keys/*.key
-data/keys/*.pem
+# Data & Secrets (NEVER COMMIT)
+data/
 *.key
-
-# Data & Large Files
-data/storage/
-data/www/ota/*.zip
-data/www/ota/*.csig
-data/state.json
-data/logs/
+*.pem
+*.bin
+*.crt
 temp/
 
 # Binaries
 bin/avbroot
 bin/custota-tool
+bin/ksud
+bin/magiskboot
 
 # Nix
 result

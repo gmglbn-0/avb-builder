@@ -28,6 +28,8 @@ class Config:
         tools_cfg = self.data.get("tools", {})
         self.avbroot_path = self._resolve_path(tools_cfg.get("avbroot_path", "./bin/avbroot"))
         self.custota_tool_path = self._resolve_path(tools_cfg.get("custota_tool_path", "./bin/custota-tool"))
+        self.ksud_path = self._resolve_path(tools_cfg.get("ksud_path", "./bin/ksud"))
+        self.magiskboot_path = self._resolve_path(tools_cfg.get("magiskboot_path", "./bin/magiskboot"))
 
         # Keys
         keys_cfg = self.data.get("keys", {})
@@ -58,6 +60,7 @@ class Config:
                 patch_mode=dev_cfg.get("patch_mode", "rootless"),
                 prepatched_boot=dev_cfg.get("prepatched_boot"),
                 magisk_apk=dev_cfg.get("magisk_apk"),
+                kmi=dev_cfg.get("kmi"),
                 keep_builds=int(dev_cfg.get("keep_builds", 2)),
                 enabled=dev_cfg.get("enabled", True),
             )
@@ -102,6 +105,8 @@ class Config:
         return {
             "avbroot": self.avbroot_path.exists() and os.access(self.avbroot_path, os.X_OK),
             "custota-tool": self.custota_tool_path.exists() and os.access(self.custota_tool_path, os.X_OK),
+            "ksud": self.ksud_path.exists() and os.access(self.ksud_path, os.X_OK),
+            "magiskboot": self.magiskboot_path.exists() and os.access(self.magiskboot_path, os.X_OK),
         }
 
     def check_keys(self) -> Dict[str, bool]:
