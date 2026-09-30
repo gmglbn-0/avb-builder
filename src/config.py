@@ -24,21 +24,6 @@ class Config:
 
         self.check_interval_hours = int(server_cfg.get("check_interval_hours", 6))
 
-        # Tool paths
-        tools_cfg = self.data.get("tools", {})
-        self.avbroot_path = self._resolve_path(tools_cfg.get("avbroot_path", "./bin/avbroot"))
-        self.custota_tool_path = self._resolve_path(tools_cfg.get("custota_tool_path", "./bin/custota-tool"))
-        self.ksud_path = self._resolve_path(tools_cfg.get("ksud_path", "./bin/ksud"))
-        self.magiskboot_path = self._resolve_path(tools_cfg.get("magiskboot_path", "./bin/magiskboot"))
-
-        # Keys
-        keys_cfg = self.data.get("keys", {})
-        self.avb_key = self._resolve_path(keys_cfg.get("avb_key", self.data_dir / "keys" / "avb.key"))
-        self.ota_key = self._resolve_path(keys_cfg.get("ota_key", self.data_dir / "keys" / "ota.key"))
-        self.ota_cert = self._resolve_path(keys_cfg.get("ota_cert", self.data_dir / "keys" / "ota.crt"))
-        self.avb_passphrase_env = keys_cfg.get("avb_passphrase_env", "PASSPHRASE_AVB")
-        self.ota_passphrase_env = keys_cfg.get("ota_passphrase_env", "PASSPHRASE_OTA")
-
         # Directories
         self.keys_dir = self.data_dir / "keys"
         self.downloads_dir = self.data_dir / "storage" / "downloads"
@@ -48,6 +33,21 @@ class Config:
         self.builds_dir = self.www_dir / "builds"
         self.logs_dir = self.data_dir / "logs"
         self.state_file = self.data_dir / "state.json"
+
+        # Tool paths
+        tools_cfg = self.data.get("tools", {})
+        self.avbroot_path = self._resolve_tool_path(tools_cfg.get("avbroot_path", "avbroot"))
+        self.custota_tool_path = self._resolve_tool_path(tools_cfg.get("custota_tool_path", "custota-tool"))
+        self.ksud_path = self._resolve_tool_path(tools_cfg.get("ksud_path", "ksud"))
+        self.magiskboot_path = self._resolve_tool_path(tools_cfg.get("magiskboot_path", "magiskboot"))
+
+        # Keys
+        keys_cfg = self.data.get("keys", {})
+        self.avb_key = self._resolve_key_path(keys_cfg.get("avb_key", "avb.key"))
+        self.ota_key = self._resolve_key_path(keys_cfg.get("ota_key", "ota.key"))
+        self.ota_cert = self._resolve_key_path(keys_cfg.get("ota_cert", "ota.crt"))
+        self.avb_passphrase_env = keys_cfg.get("avb_passphrase_env", "PASSPHRASE_AVB")
+        self.ota_passphrase_env = keys_cfg.get("ota_passphrase_env", "PASSPHRASE_OTA")
 
         # Devices
         self.devices: Dict[str, DeviceConfig] = {}
@@ -81,6 +81,32 @@ class Config:
             with open(self.config_file, "r") as f:
                 return yaml.safe_load(f) or {}
         return {}
+
+    def _resolve_tool_path(self, path_str: Any) -> Path:
+        import shutil
+        name = Path(path_str).name
+        # 1. Check if name is in system PATH (e.g. /usr/local/bin in Docker)
+        which_path = shutil.which(name) or shutil.which(str(path_str))
+        if which_path:
+            return Path(which_path)
+        # 2. Check in local bin/ directory
+        local_bin = self.root_dir / "bin" / name
+        if local_bin.exists():
+            return local_bin
+        # 3. Fallback to path resolution
+        return self._resolve_path(path_str)
+
+    def _resolve_key_path(self, path_str: Any) -> Path:
+        p = Path(path_str).expanduser()
+        if p.is_absolute() and p.exists():
+            return p
+        # Check inside keys_dir
+        if (self.keys_dir / p.name).exists():
+            return self.keys_dir / p.name
+        # Check inside data_dir
+        if (self.data_dir / p).exists():
+            return self.data_dir / p
+        return self.keys_dir / p.name
 
     def _resolve_path(self, path_str: Any) -> Path:
         p = Path(path_str).expanduser()

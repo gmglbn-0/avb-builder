@@ -6,13 +6,15 @@ server:
   check_interval_hours: 6
 
 tools:
-  avbroot_path: "./bin/avbroot"
-  custota_tool_path: "./bin/custota-tool"
+  avbroot_path: "avbroot"
+  custota_tool_path: "custota-tool"
+  ksud_path: "ksud"
+  magiskboot_path: "magiskboot"
 
 keys:
-  avb_key: "./data/keys/avb.key"
-  ota_key: "./data/keys/ota.key"
-  ota_cert: "./data/keys/ota.crt"
+  avb_key: "avb.key"
+  ota_key: "ota.key"
+  ota_cert: "ota.crt"
   avb_passphrase_env: "PASSPHRASE_AVB"
   ota_passphrase_env: "PASSPHRASE_OTA"
 
