@@ -1,0 +1,36 @@
+server:
+  host: "0.0.0.0"
+  port: 8085
+  base_url: "http://100.64.0.131:8085"
+  data_dir: "./data"
+  check_interval_hours: 6
+
+tools:
+  avbroot_path: "./bin/avbroot"
+  custota_tool_path: "./bin/custota-tool"
+
+keys:
+  avb_key: "./data/keys/avb.key"
+  ota_key: "./data/keys/ota.key"
+  ota_cert: "./data/keys/ota.crt"
+  avb_passphrase_env: "PASSPHRASE_AVB"
+  ota_passphrase_env: "PASSPHRASE_OTA"
+
+devices:
+  flame:
+    name: "Pixel 4"
+    codename: "flame"
+    upstream_url: "https://raw.githubusercontent.com/0xsoul24/OTA/cnb/builds/flame.json"
+    branch: "cnb"
+    patch_mode: "rootless"  # ROM kernel includes built-in KernelSU-Next / ReSukiSU
+    keep_builds: 2
+    enabled: true
+
+  bluejay:
+    name: "Pixel 6a"
+    codename: "bluejay"
+    upstream_url: "https://raw.githubusercontent.com/Evolution-X/OTA/vic/builds/bluejay.json"
+    branch: "vic"
+    patch_mode: "rootless"
+    keep_builds: 2
+    enabled: true

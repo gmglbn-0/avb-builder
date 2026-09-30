@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Secrets & Keys (NEVER COMMIT)
+data/keys/*.key
+data/keys/*.pem
+*.key
+
+# Data & Large Files
+data/storage/
+data/www/ota/*.zip
+data/www/ota/*.csig
+data/state.json
+data/logs/
+temp/
+
+# Binaries
+bin/avbroot
+bin/custota-tool
+
+# Nix
+result
+result-*
+.direnv/

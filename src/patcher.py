@@ -1,0 +1,226 @@
+import hashlib
+import json
+import logging
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+from typing import Callable, Optional, Dict, Any, List
+from src.config import Config
+from src.models import DeviceConfig, UpstreamBuild, LocalBuild
+
+logger = logging.getLogger("avb-builder.patcher")
+
+class PatchError(Exception):
+    pass
+
+def compute_hashes_and_size(file_path: Path) -> Dict[str, Any]:
+    sha256 = hashlib.sha256()
+    md5 = hashlib.md5()
+    size = 0
+    with open(file_path, "rb") as f:
+        while chunk := f.read(1024 * 1024):
+            sha256.update(chunk)
+            md5.update(chunk)
+            size += len(chunk)
+    return {
+        "sha256": sha256.hexdigest().lower(),
+        "md5": md5.hexdigest().lower(),
+        "size": size,
+    }
+
+def patch_ota_with_avbroot(
+    config: Config,
+    device: DeviceConfig,
+    raw_ota_path: Path,
+    output_ota_path: Path,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Path:
+    """Run avbroot ota patch to sign the OTA zip with custom AVB and OTA keys."""
+    if not config.avbroot_path.exists():
+        raise PatchError(f"avbroot binary not found at {config.avbroot_path}")
+    if not config.avb_key.exists():
+        raise PatchError(f"AVB key not found at {config.avb_key}")
+    if not config.ota_key.exists():
+        raise PatchError(f"OTA key not found at {config.ota_key}")
+    if not config.ota_cert.exists():
+        raise PatchError(f"OTA certificate not found at {config.ota_cert}")
+
+    output_ota_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_output = output_ota_path.with_suffix(output_ota_path.suffix + ".patching")
+
+    cmd = [
+        str(config.avbroot_path),
+        "ota",
+        "patch",
+        "--input", str(raw_ota_path),
+        "--key-avb", str(config.avb_key),
+        "--key-ota", str(config.ota_key),
+        "--cert-ota", str(config.ota_cert),
+        "--output", str(temp_output),
+    ]
+
+    # Passphrase environment variables if configured
+    env = os.environ.copy()
+    if os.environ.get(config.avb_passphrase_env):
+        cmd.extend(["--pass-avb-env-var", config.avb_passphrase_env])
+    if os.environ.get(config.ota_passphrase_env):
+        cmd.extend(["--pass-ota-env-var", config.ota_passphrase_env])
+
+    # Root / Patch mode
+    if device.patch_mode == "rootless":
+        cmd.append("--rootless")
+    elif device.patch_mode == "prepatched" and device.prepatched_boot:
+        cmd.extend(["--prepatched", str(device.prepatched_boot)])
+    elif device.patch_mode == "magisk" and device.magisk_apk:
+        cmd.extend(["--magisk", str(device.magisk_apk)])
+    else:
+        # Default to rootless if unspecified
+        cmd.append("--rootless")
+
+    msg = f"Executing avbroot: {' '.join(cmd)}"
+    logger.info(msg)
+    if log_callback:
+        log_callback(msg)
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+
+    if process.stdout:
+        for line in process.stdout:
+            clean_line = line.rstrip()
+            logger.info(f"[avbroot] {clean_line}")
+            if log_callback:
+                log_callback(f"[avbroot] {clean_line}")
+
+    process.wait()
+    if process.returncode != 0:
+        if temp_output.exists():
+            temp_output.unlink()
+        raise PatchError(f"avbroot failed with exit code {process.returncode}")
+
+    if temp_output.exists():
+        temp_output.rename(output_ota_path)
+
+    logger.info(f"Successfully generated signed OTA: {output_ota_path}")
+    return output_ota_path
+
+def generate_custota_csig(
+    config: Config,
+    signed_ota_path: Path,
+    output_csig_path: Path,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Path:
+    """Generate Custota signature (.csig) file using custota-tool gen-csig."""
+    if not config.custota_tool_path.exists():
+        raise PatchError(f"custota-tool not found at {config.custota_tool_path}")
+
+    cmd = [
+        str(config.custota_tool_path),
+        "gen-csig",
+        "--input", str(signed_ota_path),
+        "--key", str(config.ota_key),
+        "--cert", str(config.ota_cert),
+        "--output", str(output_csig_path),
+    ]
+
+    env = os.environ.copy()
+    if os.environ.get(config.ota_passphrase_env):
+        cmd.extend(["--passphrase-env-var", config.ota_passphrase_env])
+
+    logger.info(f"Executing custota-tool gen-csig: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        logger.error(f"custota-tool gen-csig failed: {result.stderr}")
+        raise PatchError(f"custota-tool gen-csig failed: {result.stderr}")
+
+    logger.info(f"Successfully generated csig: {output_csig_path}")
+    return output_csig_path
+
+def update_custota_json(
+    config: Config,
+    device: DeviceConfig,
+    relative_ota_location: str,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Path:
+    """Generate or update the Custota update info JSON: <device>.json"""
+    custota_json_path = config.www_dir / f"{device.codename}.json"
+
+    cmd = [
+        str(config.custota_tool_path),
+        "gen-update-info",
+        "--file", str(custota_json_path),
+        "--location", relative_ota_location,
+    ]
+
+    logger.info(f"Executing custota-tool gen-update-info: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error(f"custota-tool gen-update-info failed: {result.stderr}")
+        raise PatchError(f"custota-tool gen-update-info failed: {result.stderr}")
+
+    logger.info(f"Successfully updated Custota JSON: {custota_json_path}")
+    return custota_json_path
+
+def update_evolutionx_json(
+    config: Config,
+    device: DeviceConfig,
+    upstream: UpstreamBuild,
+    signed_ota_path: Path,
+) -> Path:
+    """Generate EvolutionX compatible builds/<device>.json"""
+    evox_json_path = config.builds_dir / f"{device.codename}.json"
+    evox_json_path.parent.mkdir(parents=True, exist_ok=True)
+
+    hashes = compute_hashes_and_size(signed_ota_path)
+    download_url = f"{config.base_url}/ota/{signed_ota_path.name}"
+
+    evox_data = {
+        "response": [
+            {
+                "maintainer": upstream.maintainer or "Self-Hosted avbroot",
+                "currently_maintained": True,
+                "oem": "Google",
+                "device": device.name,
+                "filename": signed_ota_path.name,
+                "download": download_url,
+                "timestamp": upstream.timestamp,
+                "md5": hashes["md5"],
+                "sha256": hashes["sha256"],
+                "size": hashes["size"],
+                "version": upstream.version,
+                "buildtype": upstream.buildtype,
+            }
+        ]
+    }
+
+    with open(evox_json_path, "w") as f:
+        json.dump(evox_data, f, indent=2)
+
+    logger.info(f"Successfully updated EvolutionX JSON: {evox_json_path}")
+    return evox_json_path
+
+def prune_old_builds(config: Config, device: DeviceConfig):
+    """Keep only the latest N signed builds for this device to prevent filling up the disk."""
+    ota_files = sorted(
+        config.ota_dir.glob(f"*{device.codename}*.zip"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    if len(ota_files) > device.keep_builds:
+        for old_file in ota_files[device.keep_builds:]:
+            logger.info(f"Pruning old signed OTA: {old_file}")
+            try:
+                old_file.unlink(missing_ok=True)
+                csig_file = old_file.with_name(old_file.name + ".csig")
+                csig_file.unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning(f"Failed to delete {old_file}: {e}")
