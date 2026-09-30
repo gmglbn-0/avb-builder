@@ -129,6 +129,7 @@ def patch_ota_with_avbroot(
         "--key-ota", str(config.ota_key),
         "--cert-ota", str(config.ota_cert),
         "--output", str(temp_output),
+        "--clear-vbmeta-flags",
     ]
 
     # Passphrase handling (files or env vars)

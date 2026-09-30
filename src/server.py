@@ -91,6 +91,9 @@ def create_app(config: Config, manager: BuildManager) -> FastAPI:
             "Content-Length": str(file_size),
             "Content-Type": mime_type,
         }
+        if request.method == "HEAD":
+            return Response(status_code=status.HTTP_200_OK, headers=headers)
+
         return StreamingResponse(
             range_stream(file_path, 0, file_size - 1),
             status_code=status.HTTP_200_OK,
@@ -98,19 +101,19 @@ def create_app(config: Config, manager: BuildManager) -> FastAPI:
         )
 
     # ── Custota Update Info Routes: /<device>.json ────────────────────────
-    @app.get("/{device}.json")
+    @app.api_route("/{device}.json", methods=["GET", "HEAD"])
     async def get_custota_json(request: Request, device: str):
         file_path = config.www_dir / f"{device}.json"
         return await serve_file_with_range(request, file_path)
 
     # ── EvolutionX Builds Routes: /builds/<device>.json ───────────────────
-    @app.get("/builds/{device}.json")
+    @app.api_route("/builds/{device}.json", methods=["GET", "HEAD"])
     async def get_evolutionx_json(request: Request, device: str):
         file_path = config.builds_dir / f"{device}.json"
         return await serve_file_with_range(request, file_path)
 
     # ── OTA File Downloads: /ota/{filename} ────────────────────────────────
-    @app.get("/ota/{filename}")
+    @app.api_route("/ota/{filename}", methods=["GET", "HEAD"])
     async def get_ota_file(request: Request, filename: str):
         file_path = config.ota_dir / filename
         return await serve_file_with_range(request, file_path)
