@@ -131,12 +131,31 @@ def patch_ota_with_avbroot(
         "--output", str(temp_output),
     ]
 
-    # Passphrase environment variables if configured
+    # Passphrase handling (files or env vars)
     env = os.environ.copy()
-    if os.environ.get(config.avb_passphrase_env):
+    pass_file = config.keys_dir / "passphrase.txt"
+    avb_pass_file = config.keys_dir / "avb.pass"
+    ota_pass_file = config.keys_dir / "ota.pass"
+
+    if avb_pass_file.exists():
+        cmd.extend(["--pass-avb-file", str(avb_pass_file)])
+    elif pass_file.exists():
+        cmd.extend(["--pass-avb-file", str(pass_file)])
+    elif os.environ.get(config.avb_passphrase_env):
         cmd.extend(["--pass-avb-env-var", config.avb_passphrase_env])
-    if os.environ.get(config.ota_passphrase_env):
+    elif os.environ.get("PASSPHRASE"):
+        env["PASSPHRASE"] = os.environ["PASSPHRASE"]
+        cmd.extend(["--pass-avb-env-var", "PASSPHRASE"])
+
+    if ota_pass_file.exists():
+        cmd.extend(["--pass-ota-file", str(ota_pass_file)])
+    elif pass_file.exists():
+        cmd.extend(["--pass-ota-file", str(pass_file)])
+    elif os.environ.get(config.ota_passphrase_env):
         cmd.extend(["--pass-ota-env-var", config.ota_passphrase_env])
+    elif os.environ.get("PASSPHRASE"):
+        env["PASSPHRASE"] = os.environ["PASSPHRASE"]
+        cmd.extend(["--pass-ota-env-var", "PASSPHRASE"])
 
     ksu_work_dir = None
     try:
@@ -215,8 +234,18 @@ def generate_custota_csig(
     ]
 
     env = os.environ.copy()
-    if os.environ.get(config.ota_passphrase_env):
+    pass_file = config.keys_dir / "passphrase.txt"
+    ota_pass_file = config.keys_dir / "ota.pass"
+
+    if ota_pass_file.exists():
+        cmd.extend(["--passphrase-file", str(ota_pass_file)])
+    elif pass_file.exists():
+        cmd.extend(["--passphrase-file", str(pass_file)])
+    elif os.environ.get(config.ota_passphrase_env):
         cmd.extend(["--passphrase-env-var", config.ota_passphrase_env])
+    elif os.environ.get("PASSPHRASE"):
+        env["PASSPHRASE"] = os.environ["PASSPHRASE"]
+        cmd.extend(["--passphrase-env-var", "PASSPHRASE"])
 
     logger.info(f"Executing custota-tool gen-csig: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
